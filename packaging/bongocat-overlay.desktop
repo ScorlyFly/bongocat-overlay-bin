@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Bongo Cat
+Comment=Keyboard-reactive Bongo Cat overlay
+Exec=bongocat-overlay
+Icon=bongocat-overlay
+Terminal=false
+Categories=Utility;

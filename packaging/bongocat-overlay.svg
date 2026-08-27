@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Bongo Cat</title>
+  <desc id="desc">A white cat face with pink ears on a dark background</desc>
+  <rect width="256" height="256" rx="48" fill="#111114"/>
+  <path d="M47 112 58 45l48 35c14-4 30-4 44 0l48-35 11 67c7 11 11 24 11 38 0 42-31 66-86 66s-86-24-86-66c0-14 4-27 11-38Z" fill="#f4a7ae" stroke="#050507" stroke-width="9" stroke-linejoin="round"/>
+  <path d="M58 45 68 99c15-10 27-16 38-19L58 45Zm140 0-10 54c-15-10-27-16-38-19l48-35Z" fill="#f4a7ae" stroke="#050507" stroke-width="9" stroke-linejoin="round"/>
+  <path d="M80 137c9-7 18-7 27 0m42 0c9-7 18-7 27 0M119 145c6 7 12 7 18 0" fill="none" stroke="#050507" stroke-width="8" stroke-linecap="round"/>
+  <path d="M89 186c-1 15 7 25 21 26 9 1 17-4 18-13 1 9 9 14 18 13 14-1 22-11 21-26-19 7-59 7-78 0Z" fill="#f4a7ae" stroke="#050507" stroke-width="8" stroke-linejoin="round"/>
+</svg>

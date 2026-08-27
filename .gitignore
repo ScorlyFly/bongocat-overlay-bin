@@ -1,0 +1,11 @@
+# Local build and tool output
+build/
+.cache/
+.qmlls.ini
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local user configuration
+.config/bongocat-overlay/
