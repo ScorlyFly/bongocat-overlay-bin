@@ -1,6 +1,6 @@
 # Bongo Cat Overlay
 
-![Bongo Cat overlay](docs/screenshots/bongocat-overlay.png)
+![Bongo Cat overlay](docs/screenshots/bongocat-overlay2.png)
 
 Простой standalone-оверлей Bongo Cat для Linux/Wayland. Кот реагирует на
 нажатия клавиатуры, перетаскивается мышью и не требует Quickshell. Движение
