@@ -2,6 +2,8 @@
 
 #include <QCommandLineOption>
 #include <QCommandLineParser>
+#include <QCoreApplication>
+#include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QMargins>
@@ -18,8 +20,21 @@
 #include <LayerShellQt/Window>
 
 namespace {
-constexpr int kBaseOverlayWidth = 864;
-constexpr int kBaseOverlayHeight = 360;
+// The sprite PNGs are cropped to the union of every visible pixel across all
+// four animation frames (including the detached motion lines), so the window
+// has no transparent padding that would keep the cat away from screen edges.
+constexpr int kBaseOverlayWidth = 600;
+constexpr int kBaseOverlayHeight = 345;
+// Union of the visible cat body across all four animation frames, excluding the
+// detached motion lines. This is the rectangle the selection frame should hug.
+constexpr int kContentLeftPx = 9;
+constexpr int kContentTopPx = 1;
+constexpr int kContentWidthPx = 591;
+constexpr int kContentHeightPx = 298;
+constexpr double kContentLeft = double(kContentLeftPx) / kBaseOverlayWidth;
+constexpr double kContentTop = double(kContentTopPx) / kBaseOverlayHeight;
+constexpr double kContentWidth = double(kContentWidthPx) / kBaseOverlayWidth;
+constexpr double kContentHeight = double(kContentHeightPx) / kBaseOverlayHeight;
 constexpr double kDefaultOverlaySizePercent = 100.0;
 constexpr double kMinOverlaySizePercent = 10.0;
 constexpr double kMaxOverlaySizePercent = 200.0;
@@ -55,24 +70,6 @@ QString normalizePosition(QString position)
     return supported.contains(position) ? position : kDefaultPosition;
 }
 
-LayerShellQt::Window::Anchors anchorsForPosition(const QString &position)
-{
-    LayerShellQt::Window::Anchors anchors = LayerShellQt::Window::AnchorNone;
-    if (position == QStringLiteral("up-left") || position == QStringLiteral("up")
-        || position == QStringLiteral("up-right"))
-        anchors |= LayerShellQt::Window::AnchorTop;
-    if (position == QStringLiteral("down-left") || position == QStringLiteral("down")
-        || position == QStringLiteral("down-right"))
-        anchors |= LayerShellQt::Window::AnchorBottom;
-    if (position == QStringLiteral("up-left") || position == QStringLiteral("left")
-        || position == QStringLiteral("down-left"))
-        anchors |= LayerShellQt::Window::AnchorLeft;
-    if (position == QStringLiteral("up-right") || position == QStringLiteral("right")
-        || position == QStringLiteral("down-right"))
-        anchors |= LayerShellQt::Window::AnchorRight;
-    return anchors;
-}
-
 QMargins marginsForPosition(const QString &position)
 {
     QMargins margins;
@@ -89,6 +86,29 @@ QMargins marginsForPosition(const QString &position)
         || position == QStringLiteral("down-right"))
         margins.setRight(kPositionMargin);
     return margins;
+}
+
+QPoint positionForGrid(const QString &position, const QSize &overlaySize, const QSize &screenSize)
+{
+    const QMargins margins = marginsForPosition(position);
+    int x = (screenSize.width() - overlaySize.width()) / 2;
+    int y = (screenSize.height() - overlaySize.height()) / 2;
+
+    if (position == QStringLiteral("up-left") || position == QStringLiteral("left")
+        || position == QStringLiteral("down-left"))
+        x = margins.left();
+    else if (position == QStringLiteral("up-right") || position == QStringLiteral("right")
+             || position == QStringLiteral("down-right"))
+        x = screenSize.width() - overlaySize.width() - margins.right();
+
+    if (position == QStringLiteral("up-left") || position == QStringLiteral("up")
+        || position == QStringLiteral("up-right"))
+        y = margins.top();
+    else if (position == QStringLiteral("down-left") || position == QStringLiteral("down")
+             || position == QStringLiteral("down-right"))
+        y = screenSize.height() - overlaySize.height() - margins.bottom();
+
+    return QPoint(x, y);
 }
 
 QString configPath()
@@ -208,6 +228,186 @@ private:
     bool m_stopping = false;
 };
 
+class PositionBridge final : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(int overlayWidth READ overlayWidth NOTIFY overlaySizeChanged)
+    Q_PROPERTY(int overlayHeight READ overlayHeight NOTIFY overlaySizeChanged)
+    Q_PROPERTY(qreal contentLeft READ contentLeft CONSTANT)
+    Q_PROPERTY(qreal contentTop READ contentTop CONSTANT)
+    Q_PROPERTY(qreal contentWidth READ contentWidth CONSTANT)
+    Q_PROPERTY(qreal contentHeight READ contentHeight CONSTANT)
+    Q_PROPERTY(bool mirrored READ mirrored WRITE setMirrored NOTIFY mirroredChanged)
+public:
+    explicit PositionBridge(const QSize &overlaySize, QObject *parent = nullptr)
+        : QObject(parent), m_overlaySize(overlaySize) {}
+
+    int overlayWidth() const { return m_overlaySize.width(); }
+    int overlayHeight() const { return m_overlaySize.height(); }
+    qreal contentLeft() const { return kContentLeft; }
+    qreal contentTop() const { return kContentTop; }
+    qreal contentWidth() const { return kContentWidth; }
+    qreal contentHeight() const { return kContentHeight; }
+
+    bool mirrored() const { return m_mirrored; }
+    void setMirrored(bool mirrored)
+    {
+        if (m_mirrored == mirrored) return;
+        m_mirrored = mirrored;
+        if (m_settings) {
+            m_settings->setValue(QStringLiteral("Overlay/mirror"), m_mirrored);
+            m_settings->sync();
+        }
+        emit mirroredChanged();
+    }
+
+    void attach(LayerShellQt::Window *layerWindow, QQuickWindow *window, QScreen *screen,
+                const QPoint &position, QSettings *settings)
+    {
+        m_layerWindow = layerWindow;
+        m_window = window;
+        m_screen = screen;
+        m_settings = settings;
+        if (m_settings) {
+            m_mirrored = m_settings->value(QStringLiteral("Overlay/mirror"), false).toBool();
+            emit mirroredChanged();
+        }
+        m_position = clamped(position, m_overlaySize);
+        applyGeometry();
+    }
+
+    Q_INVOKABLE QPoint dragBy(qreal dx, qreal dy)
+    {
+        if (!m_layerWindow || !m_window) return QPoint();
+        const QPoint before = m_position;
+        m_position = clamped(QPoint(qRound(m_position.x() + dx), qRound(m_position.y() + dy)),
+                             m_overlaySize);
+        if (m_position != before) applyGeometry();
+        return m_position - before;
+    }
+
+    Q_INVOKABLE QPoint resizeBy(int corner, qreal dx, qreal dy)
+    {
+        if (!m_layerWindow || !m_window || !m_screen) return QPoint();
+        if (m_overlaySize.width() <= 0 || m_overlaySize.height() <= 0) return QPoint();
+
+        // corner: 0 = top-left, 1 = top-right, 2 = bottom-right, 3 = bottom-left.
+        const bool movingLeft = corner == 0 || corner == 3;
+        const bool movingTop = corner == 0 || corner == 1;
+        const double widthDelta = movingLeft ? -dx : dx;
+        const double heightDelta = movingTop ? -dy : dy;
+        const double contentWidth = m_overlaySize.width() * kContentWidth;
+        const double contentHeight = m_overlaySize.height() * kContentHeight;
+        const double horizontalScale = (contentWidth + widthDelta) / contentWidth;
+        const double verticalScale = (contentHeight + heightDelta) / contentHeight;
+        double scale = qAbs(horizontalScale - 1.0) >= qAbs(verticalScale - 1.0)
+            ? horizontalScale : verticalScale;
+
+        const QSize screenSize = m_screen->geometry().size();
+        const int minWidth = qRound(kBaseOverlayWidth * kMinOverlaySizePercent / 100.0);
+        const int minHeight = qRound(kBaseOverlayHeight * kMinOverlaySizePercent / 100.0);
+        const int freeWidth = movingLeft ? m_position.x() + m_overlaySize.width()
+                                         : screenSize.width() - m_position.x();
+        const int freeHeight = movingTop ? m_position.y() + m_overlaySize.height()
+                                          : screenSize.height() - m_position.y();
+        const int maxWidth = qMax(minWidth,
+            qMin(qRound(kBaseOverlayWidth * kMaxOverlaySizePercent / 100.0), freeWidth));
+        const int maxHeight = qMax(minHeight,
+            qMin(qRound(kBaseOverlayHeight * kMaxOverlaySizePercent / 100.0), freeHeight));
+        const double minScale = qMax(double(minWidth) / m_overlaySize.width(),
+                                     double(minHeight) / m_overlaySize.height());
+        double maxScale = qMin(double(maxWidth) / m_overlaySize.width(),
+                               double(maxHeight) / m_overlaySize.height());
+        if (maxScale < minScale) maxScale = minScale;
+        scale = qBound(minScale, scale, maxScale);
+
+        QSize newSize(qBound(minWidth, qRound(m_overlaySize.width() * scale), maxWidth),
+                      qBound(minHeight, qRound(m_overlaySize.height() * scale), maxHeight));
+        QPoint newPosition = m_position;
+        if (movingLeft) {
+            newPosition.setX(qRound(m_position.x()
+                + (kContentLeft + kContentWidth)
+                    * (m_overlaySize.width() - newSize.width())));
+        } else {
+            newPosition.setX(qRound(m_position.x()
+                + kContentLeft * (m_overlaySize.width() - newSize.width())));
+        }
+        if (movingTop) {
+            newPosition.setY(qRound(m_position.y()
+                + (kContentTop + kContentHeight)
+                    * (m_overlaySize.height() - newSize.height())));
+        } else {
+            newPosition.setY(qRound(m_position.y()
+                + kContentTop * (m_overlaySize.height() - newSize.height())));
+        }
+        newPosition = clamped(newPosition, newSize);
+
+        const QPoint applied = newPosition - m_position;
+        if (newSize == m_overlaySize && applied.isNull()) return applied;
+        m_position = newPosition;
+        if (newSize != m_overlaySize) {
+            m_overlaySize = newSize;
+            emit overlaySizeChanged();
+        }
+        applyGeometry();
+        return applied;
+    }
+
+    Q_INVOKABLE void finishDrag() { saveGeometry(); }
+    Q_INVOKABLE void finishResize() { saveGeometry(); }
+    Q_INVOKABLE void quit() { QCoreApplication::quit(); }
+
+signals:
+    void overlaySizeChanged();
+    void mirroredChanged();
+
+private:
+    QPoint clamped(QPoint position, const QSize &size) const
+    {
+        if (!m_screen) return position;
+        const QSize screenSize = m_screen->geometry().size();
+        const int maxX = qMax(0, screenSize.width() - size.width());
+        const int maxY = qMax(0, screenSize.height() - size.height());
+        return QPoint(qBound(0, position.x(), maxX), qBound(0, position.y(), maxY));
+    }
+
+    void saveGeometry()
+    {
+        if (!m_settings) return;
+        const double percent = 100.0 * m_overlaySize.width() / kBaseOverlayWidth;
+        m_settings->setValue(QStringLiteral("Overlay/position"), QStringLiteral("custom"));
+        m_settings->setValue(QStringLiteral("Overlay/x"), m_position.x());
+        m_settings->setValue(QStringLiteral("Overlay/y"), m_position.y());
+        m_settings->setValue(QStringLiteral("Overlay/size"),
+                             QString::number(percent, 'f', 2) + QLatin1Char('%'));
+        m_settings->sync();
+    }
+
+    void applyGeometry()
+    {
+        if (!m_layerWindow || !m_window) return;
+        LayerShellQt::Window::Anchors anchors = LayerShellQt::Window::AnchorTop;
+        anchors |= LayerShellQt::Window::AnchorLeft;
+        m_layerWindow->setAnchors(anchors);
+        QMargins margins;
+        margins.setLeft(m_position.x());
+        margins.setTop(m_position.y());
+        m_layerWindow->setMargins(margins);
+        m_layerWindow->setDesiredSize(m_overlaySize);
+        // Layer shell state is only flushed with a surface commit.
+        m_window->update();
+        m_window->requestUpdate();
+    }
+
+    LayerShellQt::Window *m_layerWindow = nullptr;
+    QQuickWindow *m_window = nullptr;
+    QScreen *m_screen = nullptr;
+    QSettings *m_settings = nullptr;
+    QSize m_overlaySize;
+    QPoint m_position;
+    bool m_mirrored = false;
+};
+
 int main(int argc, char **argv)
 {
     LayerShellQt::Shell::useLayerShell();
@@ -238,7 +438,9 @@ int main(int argc, char **argv)
     parser.addOption(simulateInputOption);
     parser.process(app);
 
-    QSettings settings(configPath(), QSettings::IniFormat);
+    const QString settingsPath = configPath();
+    QDir().mkpath(QFileInfo(settingsPath).absolutePath());
+    QSettings settings(settingsPath, QSettings::IniFormat);
     const QString requestedMonitor = parser.isSet(monitorOption)
         ? parser.value(monitorOption) : settings.value(QStringLiteral("Overlay/monitor"), QStringLiteral("PRIMARY")).toString();
     QScreen *targetScreen = screenByName(requestedMonitor);
@@ -251,31 +453,42 @@ int main(int argc, char **argv)
     QStringList availableScreens;
     for (QScreen *screen : QGuiApplication::screens()) availableScreens << screen->name();
     qInfo().noquote() << "Available screens:" << availableScreens;
-    const QString configuredPosition = parser.isSet(positionOption)
-        ? parser.value(positionOption)
-        : settings.value(QStringLiteral("Overlay/position"), kDefaultPosition).toString();
-    const QString position = normalizePosition(configuredPosition);
-    if (configuredPosition.trimmed().toLower() != position)
-        qWarning().noquote() << "Unknown cat position" << configuredPosition
-                             << "; using" << position;
     const QString configuredSize = parser.isSet(sizeOption)
         ? parser.value(sizeOption)
         : settings.value(QStringLiteral("Overlay/size"), QStringLiteral("100%")).toString();
     const double sizePercent = overlaySizePercent(configuredSize);
     const QSize overlaySize = overlaySizeForPercent(sizePercent);
-    const int overlayWidth = overlaySize.width();
-    const int overlayHeight = overlaySize.height();
+
+    const QString configuredPosition = parser.isSet(positionOption)
+        ? parser.value(positionOption)
+        : settings.value(QStringLiteral("Overlay/position"), kDefaultPosition).toString();
+    const bool savedPosition = !parser.isSet(positionOption)
+        && configuredPosition.trimmed().compare(QStringLiteral("custom"), Qt::CaseInsensitive) == 0
+        && settings.contains(QStringLiteral("Overlay/x"))
+        && settings.contains(QStringLiteral("Overlay/y"));
+    QString position = kDefaultPosition;
+    QPoint initialPosition;
+    if (savedPosition) {
+        initialPosition = QPoint(settings.value(QStringLiteral("Overlay/x")).toInt(),
+                                 settings.value(QStringLiteral("Overlay/y")).toInt());
+    } else {
+        position = normalizePosition(configuredPosition);
+        if (configuredPosition.trimmed().toLower() != position)
+            qWarning().noquote() << "Unknown cat position" << configuredPosition
+                                 << "; using" << position;
+        initialPosition = positionForGrid(position, overlaySize, targetScreen->geometry().size());
+    }
     const bool simulation = parser.isSet(simulateLeftOption) || parser.isSet(simulateRightOption)
         || parser.isSet(simulateBothOption) || parser.isSet(simulateMouseOption)
         || parser.isSet(simulateInputOption);
 
     InputBridge input(!simulation, parser.isSet(debugInputOption));
+    PositionBridge positionBridge(overlaySize);
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("inputBridge"), &input);
+    engine.rootContext()->setContextProperty(QStringLiteral("positionBridge"), &positionBridge);
     engine.rootContext()->setContextProperty(QStringLiteral("debugInput"), parser.isSet(debugInputOption));
-    engine.rootContext()->setContextProperty(QStringLiteral("overlayWidth"), overlaySize.width());
-    engine.rootContext()->setContextProperty(QStringLiteral("overlayHeight"), overlaySize.height());
-    const QUrl source(QStringLiteral("qrc:/BongaCatOverlay/Overlay.qml"));
+    const QUrl source(QStringLiteral("qrc:/qt/qml/BongaCatOverlay/Overlay.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
         [source] { qCritical() << "Could not load" << source; QCoreApplication::exit(1); }, Qt::QueuedConnection);
     engine.load(source);
@@ -298,13 +511,10 @@ int main(int argc, char **argv)
     layerWindow->setActivateOnShow(false);
     layerWindow->setWantsToBeOnActiveScreen(false);
     layerWindow->setScreen(targetScreen);
-    layerWindow->setAnchors(anchorsForPosition(position));
-    layerWindow->setMargins(marginsForPosition(position));
-    layerWindow->setDesiredSize(QSize(overlayWidth, overlayHeight));
 
     window->setFlag(Qt::FramelessWindowHint, true);
     window->setFlag(Qt::WindowDoesNotAcceptFocus, true);
-    window->setFlag(Qt::WindowTransparentForInput, true);
+    positionBridge.attach(layerWindow, window, targetScreen, initialPosition, &settings);
     window->show();
 
     input.start();

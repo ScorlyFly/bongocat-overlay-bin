@@ -19,6 +19,7 @@ qt_add_qml_module(bongocat-overlay
     QML_FILES
         Overlay.qml
     RESOURCES
+        assets/resize-grip.png
         assets/bongo-cat-both-up.png
         assets/bongo-cat-left-down.png
         assets/bongo-cat-right-down.png

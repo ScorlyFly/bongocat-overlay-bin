@@ -2,3 +2,9 @@
 monitor=PRIMARY
 position=down-right
 size=100%
+# Dragging the cat saves position=custom plus the x and y coordinates.
+# Resizing saves the resulting size percentage.
+# The mirror button saves whether the cat is flipped horizontally.
+# x=512
+# y=240
+# mirror=false
