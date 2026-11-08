@@ -1,4 +1,65 @@
-bongocat-overlay.bin add in any path can in /usr/local/bin/ what be create icon we can used with flathab soft shortckut for create icon on the work table
-config.ini  - .config/bongocat-overlay/config.ini   (here we can add option monitor=HDMI-A-1 This my extern monitor you can add DP-1 this monitor ofter general laptop)
+# BongoCat Overlay
 
+Лёгкий оверлей BongoCat для Linux.
 
+## Установка
+
+Разместите исполняемый файл `bongocat-overlay.bin` в любом удобном месте вашей системы.
+
+Например, можно использовать каталог `/usr/local/bin/`:
+
+```bash
+sudo cp bongocat-overlay.bin /usr/local/bin/
+```
+
+Убедитесь, что файл имеет права на выполнение:
+
+```bash
+sudo chmod +x /usr/local/bin/bongocat-overlay.bin
+```
+
+## Ярлык на рабочем столе
+
+Вы можете создать ярлык для запуска BongoCat Overlay через меню приложений или непосредственно с рабочего стола.
+
+Для этого используйте средство создания ярлыков вашего рабочего окружения и укажите путь к исполняемому файлу `bongocat-overlay.bin`.
+
+Для простоты создание ярлыка на рабочий стол, вы можете скачать с flathub утилиту которая называется shorcut очень удобная для создания ялоков (.sh .bin) исполняемых файлов
+## Конфигурация
+
+Файл конфигурации находится по следующему пути:
+
+```text
+~/.config/bongocat-overlay/config.ini
+```
+
+Вы можете настроить монитор, на котором будет отображаться оверлей, изменив параметр `monitor`.
+
+### Выбор монитора
+
+Добавьте или измените следующий параметр в файле `config.ini`:
+
+```ini
+monitor=HDMI-A-1
+```
+
+Примеры настройки:
+
+| Монитор | Конфигурация |
+|---|---|
+| Внешний монитор | `monitor=HDMI-A-1` |
+| Экран ноутбука | `monitor=DP-1` |
+
+**Примечание:** названия мониторов зависят от вашего оборудования и системных настроек. Замените приведённые примеры на реальные названия ваших мониторов.
+
+В Hyprland вы можете посмотреть доступные мониторы с помощью команды:
+
+```bash
+hyprctl monitors
+```
+
+## Пример конфигурации
+
+```ini
+monitor=HDMI-A-1
+```
